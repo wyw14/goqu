@@ -19,8 +19,16 @@ type DialectAppender interface {
 // appendNested appends ae to b using the dialect of the enclosing statement when ae supports it.
 func appendNested(b sb.SQLBuilder, ae exp.AppendableExpression, dialect string, do *SQLDialectOptions) {
 	if da, ok := ae.(DialectAppender); ok {
+		// A goqu dataset (or any expression implementing the origin protocol) renders through the
+		// generators, so its clauses can be recorded: open a real child scope with parent linkage.
+		pushScopeFrame(b, "subquery")
+		defer sb.PopFrame(b)
 		da.AppendSQLWithDialect(b, dialect, do, ae)
 		return
 	}
+	// An external AppendableExpression writes SQL straight into the builder without exposing its inner
+	// nodes. Record the whole range as opaque rather than fabricating origins for its contents.
+	pushOpaqueFrame(b, "custom_appendable")
+	defer sb.PopFrame(b)
 	ae.AppendSQL(b)
 }

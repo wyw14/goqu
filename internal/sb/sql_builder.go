@@ -47,6 +47,9 @@ type (
 		err                error
 		// released is true while the builder sits in the pool, it guards against a double release
 		released bool
+		// rec is non-nil only while a ToSQLWithOrigins generation owns the builder. It is per-build and is
+		// dropped on reset, so pooled reuse and concurrent generations never mix origin records.
+		rec *originRecorder
 	}
 )
 
@@ -63,6 +66,33 @@ func NewSQLBuilder(isPrepared bool) SQLBuilder {
 	b.released = false
 	b.isPrepared = isPrepared
 	return b
+}
+
+// NewSQLBuilderWithOrigins returns a pooled builder together with the origin map that records the semantic
+// source of every byte written. The map is independent of the pool: it stays valid after the builder is
+// released and is never shared with another generation. Ordinary ToSQL output and argument order are
+// unaffected because the recorder only observes write boundaries.
+func NewSQLBuilderWithOrigins(isPrepared bool) (SQLBuilder, *OriginMap) {
+	b, _ := builderPool.Get().(*sqlBuilder)
+	b.released = false
+	b.isPrepared = isPrepared
+	rec, origins := newOriginRecorder()
+	b.rec = rec
+	return b, origins
+}
+
+// OriginPush opens an origin frame; it is a no-op when the builder has no recorder.
+func (b *sqlBuilder) OriginPush(spec FrameSpec) {
+	if b.rec != nil {
+		b.rec.push(spec)
+	}
+}
+
+// OriginPop closes the most recently opened origin frame; it is a no-op when the builder has no recorder.
+func (b *sqlBuilder) OriginPop() {
+	if b.rec != nil {
+		b.rec.pop()
+	}
 }
 
 // A fresh and a reset builder must look identical (e.g. nil args) so that they compare equal in tests.
@@ -94,6 +124,9 @@ func (b *sqlBuilder) reset() {
 	b.err = nil
 	b.isPrepared = false
 	b.currentArgPosition = 1
+	// The origin map belongs to the generation that created it and was returned to its caller; a reused
+	// builder must start without a recorder so old spans can never leak into a new statement.
+	b.rec = nil
 }
 
 func (b *sqlBuilder) Error() error {
@@ -110,6 +143,7 @@ func (b *sqlBuilder) SetError(err error) SQLBuilder {
 func (b *sqlBuilder) Write(bs []byte) SQLBuilder {
 	if b.err == nil {
 		b.buf.Write(bs)
+		b.syncOrigins()
 	}
 	return b
 }
@@ -119,6 +153,7 @@ func (b *sqlBuilder) WriteStrings(ss ...string) SQLBuilder {
 		for _, s := range ss {
 			b.buf.WriteString(s)
 		}
+		b.syncOrigins()
 	}
 	return b
 }
@@ -128,6 +163,7 @@ func (b *sqlBuilder) WriteRunes(rs ...rune) SQLBuilder {
 		for _, r := range rs {
 			b.buf.WriteRune(r)
 		}
+		b.syncOrigins()
 	}
 	return b
 }
@@ -136,6 +172,7 @@ func (b *sqlBuilder) WriteInt(i int64) SQLBuilder {
 	if b.err == nil {
 		// AvailableBuffer lets us format straight into the buffer's spare capacity, no scratch space needed.
 		b.buf.Write(strconv.AppendInt(b.buf.AvailableBuffer(), i, decimalBase))
+		b.syncOrigins()
 	}
 	return b
 }
@@ -143,8 +180,17 @@ func (b *sqlBuilder) WriteInt(i int64) SQLBuilder {
 func (b *sqlBuilder) WriteFloat(f float64) SQLBuilder {
 	if b.err == nil {
 		b.buf.Write(strconv.AppendFloat(b.buf.AvailableBuffer(), f, 'f', -1, float64Bits))
+		b.syncOrigins()
 	}
 	return b
+}
+
+// syncOrigins advances an active recorder to the current buffer length. Byte (not rune) length is used, so
+// multi-byte characters and escaping keep every span aligned with the final UTF-8 byte string.
+func (b *sqlBuilder) syncOrigins() {
+	if b.rec != nil {
+		b.rec.afterWrite(b.buf.Len())
+	}
 }
 
 func (b *sqlBuilder) GrowArgs(n int) SQLBuilder {

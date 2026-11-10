@@ -49,6 +49,8 @@ func (tsg *truncateSQLGenerator) Generate(b sb.SQLBuilder, clauses exp.TruncateC
 
 // Generates a TRUNCATE statement
 func (tsg *truncateSQLGenerator) TruncateSQL(b sb.SQLBuilder, from exp.ColumnListExpression, opts exp.TruncateOptions) {
+	pushClauseFrame(b, "truncate_keyword")
+	defer sb.PopFrame(b)
 	b.Write(tsg.DialectOptions().TruncateClause)
 	tsg.SourcesSQL(b, from)
 	if opts.Identity != tsg.DialectOptions().EmptyString {

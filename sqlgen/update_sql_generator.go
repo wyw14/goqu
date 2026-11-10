@@ -82,16 +82,22 @@ func (usg *updateSQLGenerator) Generate(b sb.SQLBuilder, clauses exp.UpdateClaus
 
 // Adds the correct fragment to being an UPDATE statement
 func (usg *updateSQLGenerator) UpdateBeginSQL(b sb.SQLBuilder) {
+	pushClauseFrame(b, "update_keyword")
+	defer sb.PopFrame(b)
 	b.Write(usg.DialectOptions().UpdateClause)
 }
 
 // Adds column setters in an update SET clause
 func (usg *updateSQLGenerator) UpdateExpressionsSQL(b sb.SQLBuilder, updates ...exp.UpdateExpression) {
+	pushClauseFrame(b, "set")
+	defer sb.PopFrame(b)
 	b.Write(usg.DialectOptions().SetFragment)
 	usg.UpdateExpressionSQL(b, updates...)
 }
 
 func (usg *updateSQLGenerator) updateTableSQL(b sb.SQLBuilder, uc exp.UpdateClauses) {
+	pushClauseFrame(b, "table")
+	defer sb.PopFrame(b)
 	b.WriteRunes(usg.DialectOptions().SpaceRune)
 	usg.ExpressionSQLGenerator().Generate(b, uc.Table())
 	if uc.HasFrom() {

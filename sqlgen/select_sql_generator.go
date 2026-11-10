@@ -1,6 +1,8 @@
 package sqlgen
 
 import (
+	"fmt"
+
 	"github.com/doug-martin/goqu/v9/exp"
 	"github.com/doug-martin/goqu/v9/internal/errors"
 	"github.com/doug-martin/goqu/v9/internal/sb"
@@ -109,6 +111,8 @@ func (ssg *selectSQLGenerator) distinctSQL(b sb.SQLBuilder, clauses exp.SelectCl
 	if dc == nil {
 		return
 	}
+	pushClauseFrame(b, "distinct")
+	defer sb.PopFrame(b)
 	b.Write(ssg.DialectOptions().DistinctFragment)
 	if dc.IsEmpty() {
 		b.WriteRunes(ssg.DialectOptions().SpaceRune)
@@ -134,12 +138,16 @@ func (ssg *selectSQLGenerator) selectColumnsSQL(b sb.SQLBuilder, clauses exp.Sel
 
 // Adds the SELECT clause and columns to a sql statement
 func (ssg *selectSQLGenerator) SelectSQL(b sb.SQLBuilder, clauses exp.SelectClauses) {
+	pushClauseFrame(b, "select_list")
+	defer sb.PopFrame(b)
 	b.Write(ssg.DialectOptions().SelectClause).WriteRunes(ssg.DialectOptions().SpaceRune)
 	ssg.selectSQLCommon(b, clauses)
 }
 
 // Adds the SELECT clause along with LIMIT to a SQL statement (e.g. MSSQL dialect: SELECT TOP 10 ...)
 func (ssg *selectSQLGenerator) SelectWithLimitSQL(b sb.SQLBuilder, clauses exp.SelectClauses) {
+	pushClauseFrame(b, "select_list")
+	defer sb.PopFrame(b)
 	b.Write(ssg.DialectOptions().SelectClause).WriteRunes(ssg.DialectOptions().SpaceRune)
 	// DISTINCT has to come before TOP: SELECT DISTINCT TOP (n) ...
 	ssg.distinctSQL(b, clauses)
@@ -156,10 +164,13 @@ func (ssg *selectSQLGenerator) SelectWithLimitSQL(b sb.SQLBuilder, clauses exp.S
 // Generates the JOIN clauses for an SQL statement
 func (ssg *selectSQLGenerator) JoinSQL(b sb.SQLBuilder, joins exp.JoinExpressions) {
 	if len(joins) > 0 {
-		for _, j := range joins {
+		for i, j := range joins {
+			// An indexed segment keeps joins distinct even when the same dataset is joined more than once.
+			pushClauseFrame(b, fmt.Sprintf("join[%d]", i))
 			joinType, ok := ssg.DialectOptions().JoinTypeLookup[j.JoinType()]
 			if !ok {
 				b.SetError(ErrNotSupportedJoinType(j))
+				sb.PopFrame(b)
 				return
 			}
 			b.Write(joinType)
@@ -167,15 +178,18 @@ func (ssg *selectSQLGenerator) JoinSQL(b sb.SQLBuilder, joins exp.JoinExpression
 			if t, ok := j.(exp.ConditionedJoinExpression); ok {
 				if t.IsConditionEmpty() {
 					b.SetError(ErrJoinConditionRequired(j))
+					sb.PopFrame(b)
 					return
 				}
 				// MySQL 5.7 rejects STRAIGHT_JOIN ... USING (...); only ON is portable across supported versions
 				if _, isUsing := t.Condition().(exp.JoinUsingCondition); isUsing && j.JoinType() == exp.StraightJoinType {
 					b.SetError(ErrJoinUsingNotSupported(j))
+					sb.PopFrame(b)
 					return
 				}
 				ssg.joinConditionSQL(b, t.Condition())
 			}
+			sb.PopFrame(b)
 		}
 	}
 }
@@ -183,6 +197,8 @@ func (ssg *selectSQLGenerator) JoinSQL(b sb.SQLBuilder, joins exp.JoinExpression
 // Generates the GROUP BY clause for an SQL statement
 func (ssg *selectSQLGenerator) GroupBySQL(b sb.SQLBuilder, groupBy exp.ColumnListExpression) {
 	if groupBy != nil && len(groupBy.Columns()) > 0 {
+		pushClauseFrame(b, "group_by")
+		defer sb.PopFrame(b)
 		b.Write(ssg.DialectOptions().GroupByFragment)
 		ssg.ExpressionSQLGenerator().Generate(b, groupBy)
 	}
@@ -191,6 +207,8 @@ func (ssg *selectSQLGenerator) GroupBySQL(b sb.SQLBuilder, groupBy exp.ColumnLis
 // Generates the HAVING clause for an SQL statement
 func (ssg *selectSQLGenerator) HavingSQL(b sb.SQLBuilder, having exp.ExpressionList) {
 	if having != nil && len(having.Expressions()) > 0 {
+		pushClauseFrame(b, "having")
+		defer sb.PopFrame(b)
 		b.Write(ssg.DialectOptions().HavingFragment)
 		ssg.ExpressionSQLGenerator().Generate(b, having)
 	}
@@ -200,6 +218,8 @@ func (ssg *selectSQLGenerator) HavingSQL(b sb.SQLBuilder, having exp.ExpressionL
 func (ssg *selectSQLGenerator) QualifySQL(b sb.SQLBuilder, qualify exp.ExpressionList) {
 	if qualify != nil && len(qualify.Expressions()) > 0 {
 		if ssg.DialectOptions().SupportsQualify {
+			pushClauseFrame(b, "qualify")
+			defer sb.PopFrame(b)
 			b.Write(ssg.DialectOptions().QualifyFragment)
 			ssg.ExpressionSQLGenerator().Generate(b, qualify)
 		} else {
@@ -211,6 +231,8 @@ func (ssg *selectSQLGenerator) QualifySQL(b sb.SQLBuilder, qualify exp.Expressio
 // Generates the OFFSET clause for an SQL statement
 func (ssg *selectSQLGenerator) OffsetSQL(b sb.SQLBuilder, offset uint) {
 	if offset > 0 {
+		pushClauseFrame(b, "offset")
+		defer sb.PopFrame(b)
 		b.Write(ssg.DialectOptions().OffsetFragment)
 		ssg.ExpressionSQLGenerator().Generate(b, offset)
 	}
@@ -218,8 +240,11 @@ func (ssg *selectSQLGenerator) OffsetSQL(b sb.SQLBuilder, offset uint) {
 
 // Generates the compound sql clause for an SQL statement (e.g. UNION, INTERSECT)
 func (ssg *selectSQLGenerator) CompoundsSQL(b sb.SQLBuilder, compounds []exp.CompoundExpression) {
-	for _, compound := range compounds {
+	for i, compound := range compounds {
+		// Indexed segment: a statement can union several sides and each side opens its own subquery scope.
+		pushClauseFrame(b, fmt.Sprintf("compound[%d]", i))
 		ssg.ExpressionSQLGenerator().Generate(b, compound)
+		sb.PopFrame(b)
 	}
 }
 
@@ -228,6 +253,8 @@ func (ssg *selectSQLGenerator) ForSQL(b sb.SQLBuilder, lockingClause exp.Lock) {
 	if lockingClause == nil {
 		return
 	}
+	pushClauseFrame(b, "lock")
+	defer sb.PopFrame(b)
 	switch lockingClause.Strength() {
 	case exp.ForNolock:
 		return
@@ -276,12 +303,16 @@ func (ssg *selectSQLGenerator) WindowSQL(b sb.SQLBuilder, windows []exp.WindowEx
 		b.SetError(ErrWindowNotSupported(ssg.Dialect()))
 		return
 	}
+	pushClauseFrame(b, "window")
+	defer sb.PopFrame(b)
 	b.Write(ssg.DialectOptions().WindowFragment)
 	for i, we := range windows {
+		pushClauseFrame(b, fmt.Sprintf("window[%d]", i))
 		if !we.HasName() {
 			b.SetError(ErrNoWindowName)
 		}
 		ssg.ExpressionSQLGenerator().Generate(b, we)
+		sb.PopFrame(b)
 		if i < weLen-1 {
 			b.WriteRunes(ssg.DialectOptions().CommaRune, ssg.DialectOptions().SpaceRune)
 		}
@@ -298,6 +329,8 @@ func (ssg *selectSQLGenerator) joinConditionSQL(b sb.SQLBuilder, jc exp.JoinCond
 }
 
 func (ssg *selectSQLGenerator) joinUsingConditionSQL(b sb.SQLBuilder, jc exp.JoinUsingCondition) {
+	pushClauseFrame(b, "using")
+	defer sb.PopFrame(b)
 	b.Write(ssg.DialectOptions().UsingFragment).
 		WriteRunes(ssg.DialectOptions().LeftParenRune)
 	ssg.ExpressionSQLGenerator().Generate(b, jc.Using())
@@ -305,6 +338,8 @@ func (ssg *selectSQLGenerator) joinUsingConditionSQL(b sb.SQLBuilder, jc exp.Joi
 }
 
 func (ssg *selectSQLGenerator) joinOnConditionSQL(b sb.SQLBuilder, jc exp.JoinOnCondition) {
+	pushClauseFrame(b, "on")
+	defer sb.PopFrame(b)
 	b.Write(ssg.DialectOptions().OnFragment)
 	ssg.ExpressionSQLGenerator().Generate(b, jc.On())
 }

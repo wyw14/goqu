@@ -85,6 +85,8 @@ func (csg *commonSQLGenerator) ExpressionSQLGenerator() ExpressionSQLGenerator {
 func (csg *commonSQLGenerator) ReturningSQL(b sb.SQLBuilder, returns exp.ColumnListExpression) {
 	if returns != nil && len(returns.Columns()) > 0 {
 		if csg.dialectOptions.SupportsReturn {
+			pushClauseFrame(b, "returning")
+			defer sb.PopFrame(b)
 			b.Write(csg.dialectOptions.ReturningFragment)
 			csg.esg.Generate(b, returns)
 		} else {
@@ -96,6 +98,8 @@ func (csg *commonSQLGenerator) ReturningSQL(b sb.SQLBuilder, returns exp.ColumnL
 func (csg *commonSQLGenerator) ConflictTargetSQL(b sb.SQLBuilder, targets exp.ColumnListExpression) {
 	if targets != nil && len(targets.Columns()) > 0 {
 		if csg.dialectOptions.SupportsConflictTarget {
+			pushClauseFrame(b, "conflict_target")
+			defer sb.PopFrame(b)
 			b.WriteRunes(csg.dialectOptions.SpaceRune)
 			b.WriteRunes(csg.dialectOptions.LeftParenRune)
 			csg.esg.Generate(b, targets)
@@ -109,6 +113,8 @@ func (csg *commonSQLGenerator) ConflictTargetSQL(b sb.SQLBuilder, targets exp.Co
 // Adds the FROM clause and tables to an sql statement
 func (csg *commonSQLGenerator) FromSQL(b sb.SQLBuilder, from exp.ColumnListExpression) {
 	if from != nil && !from.IsEmpty() {
+		pushClauseFrame(b, "from")
+		defer sb.PopFrame(b)
 		b.Write(csg.dialectOptions.FromFragment)
 		csg.SourcesSQL(b, from)
 	}
@@ -123,6 +129,8 @@ func (csg *commonSQLGenerator) SourcesSQL(b sb.SQLBuilder, from exp.ColumnListEx
 // Generates the WHERE clause for an SQL statement
 func (csg *commonSQLGenerator) WhereSQL(b sb.SQLBuilder, where exp.ExpressionList) {
 	if where != nil && !where.IsEmpty() {
+		pushClauseFrame(b, "where")
+		defer sb.PopFrame(b)
 		b.Write(csg.dialectOptions.WhereFragment)
 		csg.esg.Generate(b, where)
 	}
@@ -131,6 +139,8 @@ func (csg *commonSQLGenerator) WhereSQL(b sb.SQLBuilder, where exp.ExpressionLis
 // Generates the ORDER BY clause for an SQL statement
 func (csg *commonSQLGenerator) OrderSQL(b sb.SQLBuilder, order exp.ColumnListExpression) {
 	if order != nil && len(order.Columns()) > 0 {
+		pushClauseFrame(b, "order")
+		defer sb.PopFrame(b)
 		b.Write(csg.dialectOptions.OrderByFragment)
 		csg.esg.Generate(b, order)
 	}
@@ -142,6 +152,8 @@ func (csg *commonSQLGenerator) OrderWithOffsetFetchSQL(
 	offset uint,
 	limit interface{},
 ) {
+	pushClauseFrame(b, "offset_fetch")
+	defer sb.PopFrame(b)
 	always := csg.dialectOptions.AlwaysOffsetFetch
 	// an empty order list (e.g. Order() with no arguments) is the same as no ORDER BY
 	hasOrder := order != nil && len(order.Columns()) > 0
@@ -179,6 +191,8 @@ func (csg *commonSQLGenerator) OrderWithOffsetFetchSQL(
 // Generates the LIMIT clause for an SQL statement
 func (csg *commonSQLGenerator) LimitSQL(b sb.SQLBuilder, limit interface{}) {
 	if limit != nil {
+		pushClauseFrame(b, "limit")
+		defer sb.PopFrame(b)
 		b.Write(csg.dialectOptions.LimitFragment)
 		if csg.dialectOptions.SurroundLimitWithParentheses {
 			b.WriteRunes(csg.dialectOptions.LeftParenRune)
@@ -195,6 +209,8 @@ func (csg *commonSQLGenerator) UpdateExpressionSQL(b sb.SQLBuilder, updates ...e
 		b.SetError(ErrNoUpdatedValuesProvided)
 		return
 	}
+	// The "set" frame is opened by UpdateExpressionsSQL so it covers the SET keyword as well. This method is
+	// also reused by INSERT ... ON CONFLICT, where the expressions stay nested under the "conflict" frame.
 	updateLen := len(updates)
 	for i, update := range updates {
 		csg.esg.Generate(b, update)

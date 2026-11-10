@@ -1,6 +1,7 @@
 package sqlgen
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/doug-martin/goqu/v9/exp"
@@ -58,8 +59,10 @@ func (isg *insertSQLGenerator) Generate(
 		case InsertBeingSQLFragment:
 			isg.InsertBeginSQL(b, clauses.OnConflict())
 		case IntoSQLFragment:
+			pushClauseFrame(b, "into")
 			b.WriteRunes(isg.DialectOptions().SpaceRune)
 			isg.ExpressionSQLGenerator().Generate(b, clauses.Into())
+			sb.PopFrame(b)
 		case InsertSQLFragment:
 			isg.InsertSQL(b, clauses)
 		case ReturningSQLFragment:
@@ -72,6 +75,8 @@ func (isg *insertSQLGenerator) Generate(
 
 // Adds the correct fragment to being an INSERT statement
 func (isg *insertSQLGenerator) InsertBeginSQL(b sb.SQLBuilder, o exp.ConflictExpression) {
+	pushClauseFrame(b, "insert_keyword")
+	defer sb.PopFrame(b)
 	_, isNotDoNothingConflictExpression := o.(exp.ConflictUpdateExpression)
 	// A conflict target requires a real ON CONFLICT clause: INSERT IGNORE / INSERT OR IGNORE would swallow
 	// violations of every constraint, not just the targeted one.
@@ -128,16 +133,22 @@ func (isg *insertSQLGenerator) InsertExpressionSQL(b sb.SQLBuilder, ie exp.Inser
 
 // Adds the DefaultValuesFragment to an SQL statement
 func (isg *insertSQLGenerator) defaultValuesSQL(b sb.SQLBuilder) {
+	pushClauseFrame(b, "default_values")
+	defer sb.PopFrame(b)
 	b.Write(isg.DialectOptions().DefaultValuesFragment)
 }
 
 func (isg *insertSQLGenerator) insertFromSQL(b sb.SQLBuilder, ae exp.AppendableExpression) {
+	pushClauseFrame(b, "from")
+	defer sb.PopFrame(b)
 	b.WriteRunes(isg.DialectOptions().SpaceRune)
 	appendNested(b, ae, isg.Dialect(), isg.DialectOptions())
 }
 
 // Adds the columns list to an insert statement
 func (isg *insertSQLGenerator) insertColumnsSQL(b sb.SQLBuilder, cols exp.ColumnListExpression) {
+	pushClauseFrame(b, "columns")
+	defer sb.PopFrame(b)
 	b.WriteRunes(isg.DialectOptions().SpaceRune, isg.DialectOptions().LeftParenRune)
 	isg.ExpressionSQLGenerator().Generate(b, cols)
 	b.WriteRunes(isg.DialectOptions().RightParenRune)
@@ -145,15 +156,21 @@ func (isg *insertSQLGenerator) insertColumnsSQL(b sb.SQLBuilder, cols exp.Column
 
 // Adds the values clause to an SQL statement
 func (isg *insertSQLGenerator) insertValuesSQL(b sb.SQLBuilder, values [][]interface{}) {
+	pushClauseFrame(b, "values")
+	defer sb.PopFrame(b)
 	b.Write(isg.DialectOptions().ValuesFragment)
 	rowLen := len(values[0])
 	valueLen := len(values)
 	for i, row := range values {
+		// Indexed per row so bulk inserts keep every tuple attributable to its own occurrence.
+		pushClauseFrame(b, fmt.Sprintf("row[%d]", i))
 		if len(row) != rowLen {
 			b.SetError(errMisMatchedRowLength(rowLen, len(row)))
+			sb.PopFrame(b)
 			return
 		}
 		isg.ExpressionSQLGenerator().Generate(b, isg.DialectOptions().asArrayRow(row))
+		sb.PopFrame(b)
 		if i < valueLen-1 {
 			b.WriteRunes(isg.DialectOptions().CommaRune, isg.DialectOptions().SpaceRune)
 		}
@@ -165,6 +182,8 @@ func (isg *insertSQLGenerator) onConflictSQL(b sb.SQLBuilder, o exp.ConflictExpr
 	if o == nil {
 		return
 	}
+	pushClauseFrame(b, "conflict")
+	defer sb.PopFrame(b)
 	b.Write(isg.DialectOptions().ConflictFragment)
 	switch t := o.(type) {
 	case exp.ConflictUpdateExpression:

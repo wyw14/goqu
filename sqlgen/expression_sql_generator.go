@@ -98,6 +98,12 @@ func (esg *expressionSQLGenerator) Generate(b sb.SQLBuilder, val interface{}) {
 	if b.Error() != nil {
 		return
 	}
+	if e, isExpression := val.(exp.Expression); isExpression {
+		// Every expression node (including reused nodes and literals) gets its own frame here, so origins
+		// are collected at the generator write boundary rather than by searching the final SQL string.
+		pushExpressionFrame(b, e)
+		defer sb.PopFrame(b)
+	}
 	if val == nil {
 		esg.literalNil(b)
 		return
@@ -319,6 +325,10 @@ func (esg *expressionSQLGenerator) expressionSQL(b sb.SQLBuilder, expression exp
 
 // Generates a placeholder (e.g. ?, $1)
 func (esg *expressionSQLGenerator) placeHolderSQL(b sb.SQLBuilder, i interface{}) {
+	// The span covers the whole placeholder, so it stays exact when numbered placeholders change width
+	// ($9 -> $10, @p9 -> @p10). Only the position is recorded, never the value i.
+	pushArgFrame(b, b.CurrentArgPosition())
+	defer sb.PopFrame(b)
 	b.Write(esg.dialectOptions.PlaceHolderFragment)
 	if esg.dialectOptions.IncludePlaceholderNum {
 		b.WriteInt(int64(b.CurrentArgPosition()))
@@ -397,6 +407,8 @@ func (esg *expressionSQLGenerator) lateralExpressionSQL(b sb.SQLBuilder, le exp.
 		b.SetError(errLateralNotSupported(esg.dialect))
 		return
 	}
+	pushClauseFrame(b, "lateral")
+	defer sb.PopFrame(b)
 	b.Write(esg.dialectOptions.LateralFragment)
 	esg.Generate(b, le.Table())
 }
@@ -1007,6 +1019,8 @@ func (esg *expressionSQLGenerator) commonTablesSliceSQL(b sb.SQLBuilder, ctes []
 		b.SetError(ErrCTENotSupported(esg.dialect))
 		return
 	}
+	pushClauseFrame(b, "with")
+	defer sb.PopFrame(b)
 	b.Write(esg.dialectOptions.WithFragment)
 	anyRecursive := false
 	for _, cte := range ctes {
@@ -1020,7 +1034,11 @@ func (esg *expressionSQLGenerator) commonTablesSliceSQL(b sb.SQLBuilder, ctes []
 		b.Write(esg.dialectOptions.RecursiveFragment)
 	}
 	for i, cte := range ctes {
+		// Each CTE gets an indexed segment so repeated or structurally identical CTEs never collapse into
+		// the first occurrence; the CTE body opens its own subquery scope.
+		pushClauseFrame(b, fmt.Sprintf("cte[%d]", i))
 		esg.Generate(b, cte)
+		sb.PopFrame(b)
 		if i < l-1 {
 			b.WriteRunes(esg.dialectOptions.CommaRune, esg.dialectOptions.SpaceRune)
 		}

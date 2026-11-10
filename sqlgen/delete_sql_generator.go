@@ -73,6 +73,8 @@ func (dsg *deleteSQLGenerator) Generate(b sb.SQLBuilder, clauses exp.DeleteClaus
 
 // Adds the correct fragment to being an DELETE statement
 func (dsg *deleteSQLGenerator) DeleteBeginSQL(b sb.SQLBuilder, from exp.ColumnListExpression, multiTable bool) {
+	pushClauseFrame(b, "delete_keyword")
+	defer sb.PopFrame(b)
 	b.Write(dsg.DialectOptions().DeleteClause)
 	if multiTable && dsg.DialectOptions().SupportsDeleteTableHint {
 		dsg.SourcesSQL(b, from)

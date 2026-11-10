@@ -46,6 +46,15 @@ type (
 		SupportsQualify bool
 		// Set to false if the dialect does not require expressions to be wrapped in parens (DEFAULT=true)
 		WrapCompoundsInParens bool
+		// Set to true to run bounded predicate optimization on structured WHERE and HAVING expression lists before
+		// rendering. This extracts common pure factors, e.g. (A AND B) OR (A AND C) becomes A AND (B OR C), and merges
+		// repeated pure atoms so large argument expressions are not emitted more than once. Only built in comparison
+		// atoms over identifiers and comparable literal values are reordered; literal SQL, custom functions,
+		// driver.Valuers, subqueries and volatile expressions stay ordered opaque barriers. Three valued logic is
+		// preserved (no NULL/NOT simplification or constant folding), the tree is never expanded to DNF and budgets
+		// make the pass fall back to the original expression. A new tree is returned, so arguments are rebuilt in the
+		// new walk order. Defaults to false, which keeps generated SQL byte for byte identical to previous versions.
+		OptimizePredicates bool
 
 		// Set to true if window function are supported in SELECT statement. (DEFAULT=true)
 		SupportsWindowFunction bool
@@ -475,6 +484,7 @@ func DefaultDialectOptions() *SQLDialectOptions {
 		SupportsWindowFunction:      true,
 		SupportsLateral:             true,
 		SupportsQualify:             false,
+		OptimizePredicates:          false,
 
 		SupportsMultipleUpdateTables:         true,
 		UseFromClauseForMultipleUpdateTables: true,

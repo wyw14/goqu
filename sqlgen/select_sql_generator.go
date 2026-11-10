@@ -192,7 +192,7 @@ func (ssg *selectSQLGenerator) GroupBySQL(b sb.SQLBuilder, groupBy exp.ColumnLis
 func (ssg *selectSQLGenerator) HavingSQL(b sb.SQLBuilder, having exp.ExpressionList) {
 	if having != nil && len(having.Expressions()) > 0 {
 		b.Write(ssg.DialectOptions().HavingFragment)
-		ssg.ExpressionSQLGenerator().Generate(b, having)
+		ssg.ExpressionSQLGenerator().Generate(b, optimizePredicates(ssg.DialectOptions(), having))
 	}
 }
 

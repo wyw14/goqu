@@ -124,8 +124,23 @@ func (csg *commonSQLGenerator) SourcesSQL(b sb.SQLBuilder, from exp.ColumnListEx
 func (csg *commonSQLGenerator) WhereSQL(b sb.SQLBuilder, where exp.ExpressionList) {
 	if where != nil && !where.IsEmpty() {
 		b.Write(csg.dialectOptions.WhereFragment)
-		csg.esg.Generate(b, where)
+		csg.esg.Generate(b, optimizePredicates(csg.dialectOptions, where))
 	}
+}
+
+// optimizePredicates returns the predicate tree to render. When OptimizePredicates is enabled it runs the bounded
+// optimizer and uses its new tree; any budget miss or no-op result renders the original tree instead. The builder
+// walks the returned tree and accumulates arguments in that walk order, so the arguments are always rebuilt from the
+// rendered tree rather than reused from the input.
+func optimizePredicates(options *SQLDialectOptions, predicate exp.Expression) exp.Expression {
+	if !options.OptimizePredicates {
+		return predicate
+	}
+	optimized, report := exp.OptimizePredicateExpression(predicate, exp.DefaultPredicateOptimizationBudget())
+	if !report.Applied {
+		return predicate
+	}
+	return optimized
 }
 
 // Generates the ORDER BY clause for an SQL statement

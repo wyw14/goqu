@@ -13,6 +13,7 @@ func DialectOptions() *goqu.SQLDialectOptions {
 	do.BinaryLiteralPrefix = []byte("decode('")
 	do.BinaryLiteralSuffix = []byte("', 'hex')")
 	do.BinaryLiteralBytes = []byte{0}
+	do.SupportsGroupingSets = true
 	return do
 }
 

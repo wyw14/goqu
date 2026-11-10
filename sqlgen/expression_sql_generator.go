@@ -308,12 +308,26 @@ func (esg *expressionSQLGenerator) expressionSQL(b sb.SQLBuilder, expression exp
 		esg.compoundExpressionSQL(b, e)
 	case exp.CaseExpression:
 		esg.caseExpressionSQL(b, e)
-	case exp.Ex:
-		esg.expressionMapSQL(b, e)
-	case exp.ExOr:
-		esg.expressionOrMapSQL(b, e)
+	case exp.GroupingSetsExpression, exp.GroupingSetExpression, exp.GroupingKeyExpression, exp.GroupingIDExpression:
+		esg.groupingExpressionSQL(b, e)
+	case exp.Ex, exp.ExOr:
+		esg.expressionMapOrAnySQL(b, e)
 	default:
 		b.SetError(errUnsupportedExpressionType(e))
+	}
+}
+
+// groupingExpressionSQL renders the GROUPING SETS family of expressions.
+func (esg *expressionSQLGenerator) groupingExpressionSQL(b sb.SQLBuilder, e exp.Expression) {
+	switch t := e.(type) {
+	case exp.GroupingSetsExpression:
+		b.SetError(errors.New("GROUPING SETS can only be rendered through a GROUP BY clause"))
+	case exp.GroupingSetExpression:
+		esg.groupingSetExpressionSQL(b, t)
+	case exp.GroupingKeyExpression:
+		esg.Generate(b, t.Key())
+	case exp.GroupingIDExpression:
+		esg.groupingIDExpressionSQL(b, t)
 	}
 }
 
@@ -1083,8 +1097,18 @@ func (esg *expressionSQLGenerator) caseExpressionSQL(b sb.SQLBuilder, caseExpres
 	b.Write(esg.dialectOptions.EndFragment)
 }
 
-func (esg *expressionSQLGenerator) expressionMapSQL(b sb.SQLBuilder, ex exp.Ex) {
-	expressionList, err := ex.ToExpressions()
+// expressionMapOrAnySQL renders both the AND (Ex) and OR (ExOr) expression maps.
+func (esg *expressionSQLGenerator) expressionMapOrAnySQL(b sb.SQLBuilder, e exp.Expression) {
+	var (
+		expressionList exp.ExpressionList
+		err            error
+	)
+	switch t := e.(type) {
+	case exp.Ex:
+		expressionList, err = t.ToExpressions()
+	case exp.ExOr:
+		expressionList, err = t.ToExpressions()
+	}
 	if err != nil {
 		b.SetError(err)
 		return
@@ -1092,11 +1116,20 @@ func (esg *expressionSQLGenerator) expressionMapSQL(b sb.SQLBuilder, ex exp.Ex) 
 	esg.Generate(b, expressionList)
 }
 
-func (esg *expressionSQLGenerator) expressionOrMapSQL(b sb.SQLBuilder, ex exp.ExOr) {
-	expressionList, err := ex.ToExpressions()
-	if err != nil {
-		b.SetError(err)
-		return
-	}
-	esg.Generate(b, expressionList)
+// groupingSetExpressionSQL renders one grouping set as a parenthesized key list, e.g. ("a", "b") or () for the
+// grand total set.
+func (esg *expressionSQLGenerator) groupingSetExpressionSQL(b sb.SQLBuilder, set exp.GroupingSetExpression) {
+	opts := esg.dialectOptions
+	b.WriteRunes(opts.LeftParenRune)
+	esg.Generate(b, newExpressionColumnList(set.Columns()))
+	b.WriteRunes(opts.RightParenRune)
+}
+
+// groupingIDExpressionSQL renders the GROUPING bitmap function, e.g. GROUPING("a", "b").
+func (esg *expressionSQLGenerator) groupingIDExpressionSQL(b sb.SQLBuilder, gid exp.GroupingIDExpression) {
+	opts := esg.dialectOptions
+	b.Write(opts.GroupingFunctionFragment)
+	b.WriteRunes(opts.LeftParenRune)
+	esg.Generate(b, gid.Columns())
+	b.WriteRunes(opts.RightParenRune)
 }

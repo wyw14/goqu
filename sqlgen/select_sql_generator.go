@@ -52,6 +52,25 @@ func NewSelectSQLGenerator(dialect string, do *SQLDialectOptions) SelectSQLGener
 }
 
 func (ssg *selectSQLGenerator) Generate(b sb.SQLBuilder, clauses exp.SelectClauses) {
+	// The UNION ALL lowering of GROUPING SETS renders a complete statement (branches plus the global ORDER/LIMIT
+	// wrapper), so it takes over the whole generation instead of emitting one fragment inside the loop below.
+	if ssg.generateLoweredGroupingSets(b, clauses) {
+		return
+	}
+	ssg.generateFragments(b, clauses)
+}
+
+// generateLoweredGroupingSets returns true when the whole statement was rendered as a UNION ALL lowering.
+func (ssg *selectSQLGenerator) generateLoweredGroupingSets(b sb.SQLBuilder, clauses exp.SelectClauses) bool {
+	gse := clauses.GroupingSets()
+	if gse == nil || ssg.DialectOptions().SupportsGroupingSets {
+		return false
+	}
+	ssg.GroupByOrGroupingSetsSQL(b, clauses)
+	return true
+}
+
+func (ssg *selectSQLGenerator) generateFragments(b sb.SQLBuilder, clauses exp.SelectClauses) {
 	for _, f := range ssg.DialectOptions().SelectSQLOrder {
 		if b.Error() != nil {
 			return
@@ -70,7 +89,7 @@ func (ssg *selectSQLGenerator) Generate(b sb.SQLBuilder, clauses exp.SelectClaus
 		case WhereSQLFragment:
 			ssg.WhereSQL(b, clauses.Where())
 		case GroupBySQLFragment:
-			ssg.GroupBySQL(b, clauses.GroupBy())
+			ssg.GroupByOrGroupingSetsSQL(b, clauses)
 		case HavingSQLFragment:
 			ssg.HavingSQL(b, clauses.Having())
 		case QualifySQLFragment:

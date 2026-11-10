@@ -370,3 +370,37 @@ func Exists(subquery exp.AppendableExpression) exp.LiteralExpression {
 func Case() exp.CaseExpression {
 	return exp.NewCaseExpression()
 }
+
+// Creates one grouping set for a GROUPING SETS clause. Pass no columns for the grand total set (). Strings are
+// parsed as identifiers; use GroupingKey to declare the NULL type used when the key is aggregated away by the
+// UNION ALL lowering of a dialect without native GROUPING SETS.
+//
+//	GroupingSet("a", "b") -> ("a", "b")
+//	GroupingSet()          -> ()
+func GroupingSet(cols ...interface{}) exp.GroupingSetExpression {
+	return exp.NewGroupingSetExpression(cols...)
+}
+
+// Creates the finite grouping set collection used by SelectDataset.GroupingSets. The union of the keys of all
+// sets, in first-seen order, becomes the grouping keys. Duplicate sets are preserved because GROUPING SETS repeats
+// the rows of a set as many times as it is listed. maxBranches of zero applies the dialect branch budget.
+//
+//	GroupingSets(0, GroupingSet("a", "b"), GroupingSet("a"), GroupingSet())
+func GroupingSets(maxBranches int, sets ...exp.GroupingSetExpression) exp.GroupingSetsExpression {
+	return exp.NewGroupingSetsExpression(maxBranches, sets...)
+}
+
+// Creates a GROUPING(key, ...) bitmap reference. In native GROUPING SETS dialects it renders the SQL GROUPING
+// function; in the UNION ALL lowering it is replaced by the constant bitmap of the branch being rendered. The keys
+// must be the GROUPING SETS keys in the same order.
+func GroupingID(cols ...interface{}) exp.GroupingIDExpression {
+	return exp.NewGroupingIDExpression(cols...)
+}
+
+// Wraps a grouping key with the SQL type used for the NULL emitted by a UNION ALL branch that aggregates the key
+// away. Without a type the branch emits a plain NULL.
+//
+//	GroupingKey("a", "INTEGER") -> CAST(NULL AS INTEGER) in branches without "a"
+func GroupingKey(col interface{}, nullType string) exp.GroupingKeyExpression {
+	return exp.NewGroupingKeyExpression(col, nullType)
+}

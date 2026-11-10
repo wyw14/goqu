@@ -440,6 +440,17 @@ func (sd *SelectDataset) GroupByAppend(groupBy ...interface{}) *SelectDataset {
 	return sd.copy(sd.clauses.GroupByAppend(exp.NewColumnListExpression(groupBy...)))
 }
 
+// Adds a GROUP BY GROUPING SETS clause with an explicitly declared, finite collection of grouping sets. The
+// current dataset is not modified: a new dataset is returned. Dialects with native GROUPING SETS support (e.g.
+// postgres) render the native syntax; the other dialects lower it to a restricted UNION ALL query, see
+// goqu.GroupingSets for the limitations. Pass nil to clear a previously set grouping sets expression.
+func (sd *SelectDataset) GroupingSets(gs exp.GroupingSetsExpression) *SelectDataset {
+	if gs == nil {
+		return sd.copy(sd.clauses.ClearGroupingSets())
+	}
+	return sd.copy(sd.clauses.SetGroupingSets(gs))
+}
+
 // Adds a HAVING clause. See examples.
 func (sd *SelectDataset) Having(expressions ...exp.Expression) *SelectDataset {
 	return sd.copy(sd.clauses.HavingAppend(expressions...))

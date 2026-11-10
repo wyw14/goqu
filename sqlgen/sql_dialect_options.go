@@ -7,6 +7,10 @@ import (
 	"github.com/doug-martin/goqu/v9/exp"
 )
 
+// defaultMaxGroupingSetBranches bounds the UNION ALL branches a GROUPING SETS lowering emits unless an expression
+// declares its own budget.
+const defaultMaxGroupingSetBranches = 64
+
 type (
 	SQLFragmentType   int
 	SQLDialectOptions struct {
@@ -44,6 +48,12 @@ type (
 		// Set to true if the dialect supports QUALIFY expressions, e.g. Teradata, Snowflake, BigQuery (DEFAULT=false).
 		// None of the built in dialects enable it: register your own dialect with it set to true.
 		SupportsQualify bool
+		// Set to true if the dialect supports the native GROUP BY GROUPING SETS syntax (DEFAULT=false).
+		// Dialects without it lower GroupingSets to a restricted UNION ALL query.
+		SupportsGroupingSets bool
+		// Maximum number of branches emitted when lowering GROUPING SETS to UNION ALL (DEFAULT=64). It bounds the
+		// exponential growth of expanded sets (e.g. CUBE) and can be overridden per expression.
+		MaxGroupingSetBranches int
 		// Set to false if the dialect does not require expressions to be wrapped in parens (DEFAULT=true)
 		WrapCompoundsInParens bool
 
@@ -101,6 +111,10 @@ type (
 		WhereFragment []byte
 		// The SQL GROUP BY clause fragment(DEFAULT=[]byte(" GROUP BY "))
 		GroupByFragment []byte
+		// The SQL GROUPING SETS fragment rendered after GROUP BY (DEFAULT=[]byte("GROUPING SETS "))
+		GroupingSetsFragment []byte
+		// The SQL GROUPING function name used by GroupingID expressions (DEFAULT=[]byte("GROUPING"))
+		GroupingFunctionFragment []byte
 		// The SQL HAVING clause fragment(DEFAULT=[]byte(" HAVING "))
 		HavingFragment []byte
 		// The SQL QUALIFY clause fragment(DEFAULT=[]byte(" QUALIFY "))
@@ -475,6 +489,8 @@ func DefaultDialectOptions() *SQLDialectOptions {
 		SupportsWindowFunction:      true,
 		SupportsLateral:             true,
 		SupportsQualify:             false,
+		SupportsGroupingSets:        false,
+		MaxGroupingSetBranches:      defaultMaxGroupingSetBranches,
 
 		SupportsMultipleUpdateTables:         true,
 		UseFromClauseForMultipleUpdateTables: true,
@@ -500,6 +516,8 @@ func DefaultDialectOptions() *SQLDialectOptions {
 		OnFragment:                []byte(" ON "),
 		WhereFragment:             []byte(" WHERE "),
 		GroupByFragment:           []byte(" GROUP BY "),
+		GroupingSetsFragment:      []byte("GROUPING SETS "),
+		GroupingFunctionFragment:  []byte("GROUPING"),
 		HavingFragment:            []byte(" HAVING "),
 		WindowFragment:            []byte(" WINDOW "),
 		QualifyFragment:           []byte(" QUALIFY "),

@@ -42,6 +42,10 @@ type (
 		SetGroupBy(cl ColumnListExpression) SelectClauses
 		GroupByAppend(cl ColumnListExpression) SelectClauses
 
+		GroupingSets() GroupingSetsExpression
+		SetGroupingSets(gse GroupingSetsExpression) SelectClauses
+		ClearGroupingSets() SelectClauses
+
 		Limit() interface{}
 		HasLimit() bool
 		ClearLimit() SelectClauses
@@ -78,6 +82,7 @@ type (
 		where         ExpressionList
 		alias         IdentifierExpression
 		groupBy       ColumnListExpression
+		groupingSets  GroupingSetsExpression
 		having        ExpressionList
 		order         ColumnListExpression
 		limit         interface{}
@@ -122,6 +127,7 @@ func (c *selectClauses) clone() *selectClauses {
 		where:         c.where,
 		alias:         c.alias,
 		groupBy:       c.groupBy,
+		groupingSets:  c.groupingSets,
 		having:        c.having,
 		order:         c.order,
 		limit:         c.limit,
@@ -336,6 +342,22 @@ func (c *selectClauses) GroupByAppend(cl ColumnListExpression) SelectClauses {
 func (c *selectClauses) SetGroupBy(cl ColumnListExpression) SelectClauses {
 	ret := c.clone()
 	ret.groupBy = cl
+	return ret
+}
+
+func (c *selectClauses) GroupingSets() GroupingSetsExpression {
+	return c.groupingSets
+}
+
+func (c *selectClauses) SetGroupingSets(gse GroupingSetsExpression) SelectClauses {
+	ret := c.clone()
+	ret.groupingSets = gse
+	return ret
+}
+
+func (c *selectClauses) ClearGroupingSets() SelectClauses {
+	ret := c.clone()
+	ret.groupingSets = nil
 	return ret
 }
 
